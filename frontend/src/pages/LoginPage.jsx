@@ -109,17 +109,16 @@ export default function LoginPage() {
   };
 
   return (
-    <main>
-      <div>
+    <div className="container">
+      <div className="form-container">
         <h1>Type Racer</h1>
         <p>Join a race and test your typing speed</p>
-      </div>
 
-      <div>
-        <form onSubmit={handleSubmit}>
-          <div>
+        <form onSubmit={handleSubmit} className="form">
+          <div className="form-group">
             <label htmlFor="username">Username</label>
             <input
+              className="input-field"
               type="text"
               name="username"
               id="username"
@@ -131,11 +130,13 @@ export default function LoginPage() {
               }
               value={formDetails.username}
               disabled={loading}
+              placeholder="Enter your name"
             />
           </div>
-          <div>
+          <div className="form-group">
             <label htmlFor="roomcode">Room Code</label>
             <input
+              className="input-field"
               type="text"
               name="roomcode"
               id="roomcode"
@@ -147,35 +148,34 @@ export default function LoginPage() {
               }
               value={formDetails.roomCode}
               disabled={loading}
+              placeholder="XXXXXX"
+              maxLength={8}
             />
           </div>
-          <button type="submit" disabled={loading || !socketConnected}>
+          <button
+            className="submit-button"
+            type="submit"
+            disabled={loading || !socketConnected}
+          >
             {loading ? "Joining..." : "Join Room"}
           </button>
         </form>
 
-        {loading && <p>Loading...</p>}
-
+        {loading && <p className="status muted">Please wait...</p>}
         {!socketConnected && (
-          <p style={{ color: "orange" }}>
-            Connecting to server...
-            {socket.id && <span> (Socket ID: {socket.id})</span>}
-          </p>
+          <p className="status muted">Connecting to server...</p>
         )}
+        {socketConnected && <p className="status success">Connected</p>}
 
-        {socketConnected && (
-          <p style={{ color: "green" }}>
-            Connected to server ✓ (Socket ID: {socket.id})
-          </p>
-        )}
-
-        <div>
+        <div style={{ marginTop: "1rem" }}>
           <span>
-            Don't have a room? <Link to="create">Create one</Link> or join a
-            public race.
+            Don't have a room?{" "}
+            <Link to="create" style={{ color: "var(--accent)" }}>
+              Create one
+            </Link>
           </span>
         </div>
       </div>
-    </main>
+    </div>
   );
 }

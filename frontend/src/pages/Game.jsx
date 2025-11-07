@@ -15,7 +15,8 @@ export default function Game() {
   const paragraphLength = useRef(0);
   const [index, setIndex] = useState(0);
   const [accuracy, setAccuracy] = useState(100);
-
+  const textRef = useRef(null);
+  const [, setMessageSent] = useState([]);
   const navigate = useNavigate();
 
   const calculateAccuracy = useCallback((paragraph) => {
@@ -74,6 +75,12 @@ export default function Game() {
       }
       setUsers(tempUsers);
 
+      const tempMessageSent = res.data.users.map((u) => ({
+        username: u.username,
+        sent: false,
+      }));
+      setMessageSent(tempMessageSent);
+
       const resp = await axios.get("/api/getUser", {
         params: {
           socketID: socket.id,
@@ -101,6 +108,16 @@ export default function Game() {
   useEffect(() => {
     const handleKeyDown = (e) => {
       const key = e.key;
+
+      // Prevent page scroll/back navigation for typing keys
+      if (
+        key === " " ||
+        key === "Spacebar" ||
+        key === "Backspace" ||
+        /^[a-zA-Z0-9 .,!?;:'"()-]$/.test(key)
+      ) {
+        e.preventDefault();
+      }
 
       // Don't process input if game is complete
       if (percentage >= 100) return;
@@ -151,6 +168,19 @@ export default function Game() {
     setPercentage(newPercentage);
   }, [index, calculatePercentage]);
 
+  // Auto-scroll: keep the caret within the visible area
+  useEffect(() => {
+    if (!textRef.current) return;
+    const caret = textRef.current.querySelector(".caret");
+    if (caret) {
+      caret.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "nearest",
+      });
+    }
+  }, [index, paragraph.length]);
+
   // Emit game details when stats change
   useEffect(() => {
     if (!username || users.length === 0) return;
@@ -174,13 +204,36 @@ export default function Game() {
       socket.emit("game-details", updatedUsers, roomCode);
       setUsers(updatedUsers);
     }
-  }, [accuracy, percentage, username, roomCode]);
+  }, [accuracy, percentage, username, roomCode, users]);
 
-  // Register socket event handler only once
   useEffect(() => {
     const handler = (newUsers) => {
       console.log("Received game details update:", newUsers);
       setUsers(newUsers);
+
+      newUsers.forEach((user) => {
+        setMessageSent((prev) => {
+          // Find by username to be robust to ordering changes
+          const idx = prev.findIndex((e) => e.username === user.username);
+          const alreadySent = idx !== -1 && prev[idx]?.sent;
+
+          if (
+            user.completion === 100 &&
+            !alreadySent &&
+            username !== user.username
+          ) {
+            toast.success(`${user.username} has completed typing`);
+            const updated = [...prev];
+            if (idx === -1) {
+              updated.push({ username: user.username, sent: true });
+            } else {
+              updated[idx] = { ...updated[idx], sent: true };
+            }
+            return updated;
+          }
+          return prev;
+        });
+      });
     };
 
     socket.on("recieve-game-details", handler);
@@ -200,123 +253,86 @@ export default function Game() {
     }
   }, [users, navigate, roomCode]);
 
-  const getColor = (num) => {
-    if (num === -1) return "#666666"; // gray for untyped
-    if (num === 0) return "#FF0000"; // red for incorrect
-    return "#00FF00"; // green for correct
+  const getClassForValidity = (v) => {
+    if (v === -1) return "char-untyped";
+    if (v === 0) return "char-incorrect";
+    return "char-correct";
   };
 
-  if (loading) return <p>Loading game details...</p>;
-  if (error) return <p style={{ color: "red" }}>Error: {error}</p>;
+  if (loading)
+    return (
+      <div className="container">
+        <p className="status muted">Loading game details...</p>
+      </div>
+    );
+  if (error)
+    return (
+      <div className="container">
+        <p className="status error">Error: {error}</p>
+      </div>
+    );
 
   return (
-    <div style={{ padding: "20px" }}>
-      <h1>Game - Room: {roomCode}</h1>
+    <div className="container game-layout">
+      <h1>Room: {roomCode}</h1>
 
-      <div style={{ marginBottom: "20px" }}>
+      <div className="players-section">
         <h2>Players ({users.length})</h2>
-        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+        <div className="user-strip">
           {users.map((user, idx) => (
-            <div
-              key={idx}
-              style={{
-                padding: "10px",
-                border: "1px solid #ccc",
-                borderRadius: "5px",
-                backgroundColor:
-                  user.username === username ? "#e3f2fd" : "transparent",
-              }}
-            >
-              <strong>
+            <div key={idx} className="user-pill">
+              <span
+                className={`name ${user.username === username ? "me" : ""}`}
+              >
                 {user.username}
                 {user.username === username && " (YOU)"}
-              </strong>
-              <div>
-                Completion:{" "}
-                {user.completion >= 100 ? " Completed" : `${user.completion}%`}
-              </div>
-              <div>Accuracy: {user.accuracy}%</div>
+              </span>
+              <span className="stat-badge">
+                P: {user.completion >= 100 ? "100%" : `${user.completion}%`}
+              </span>
+              <span className="stat-badge">A: {user.accuracy}%</span>
             </div>
           ))}
         </div>
       </div>
 
-      <div style={{ marginBottom: "20px" }}>
-        <h2>Type this paragraph:</h2>
-        <div
-          style={{
-            fontSize: "24px",
-            lineHeight: "1.8",
-            fontFamily: "monospace",
-            backgroundColor: "#f5f5f5",
-            padding: "20px",
-            borderRadius: "5px",
-            position: "relative",
-          }}
-        >
-          {paragraph.map((el, i) => (
-            <span
-              key={i}
-              style={{ color: getColor(el.valid), position: "relative" }}
-            >
-              {el.letter}
-              {i === index && (
-                <span
-                  style={{
-                    display: "inline-block",
-                    width: "2px",
-                    height: "1.2em",
-                    backgroundColor: "#000",
-                    marginLeft: "2px",
-                    animation: "blink 1s steps(1) infinite",
-                  }}
-                  className="blinking-cursor"
-                ></span>
-              )}
-            </span>
-          ))}
-          {/* Blinking cursor at the end if finished */}
-          {index >= paragraph.length && (
-            <span
-              style={{
-                display: "inline-block",
-                width: "2px",
-                height: "1.2em",
-                backgroundColor: "#000",
-                marginLeft: "2px",
-                animation: "blink 1s steps(1) infinite",
-              }}
-              className="blinking-cursor"
-            ></span>
-          )}
+      <div className="text-section">
+        <h2>Type this paragraph</h2>
+        <div className="game-area">
+          <div className="game-text" ref={textRef}>
+            {paragraph.map((el, i) => (
+              <span key={i} className={`char ${getClassForValidity(el.valid)}`}>
+                {i === index && <span className="caret" />}
+                {el.letter}
+              </span>
+            ))}
+            {index >= paragraph.length && (
+              <span
+                className="char char-untyped"
+                style={{ display: "inline-block", width: 0 }}
+              >
+                <span className="caret" />
+              </span>
+            )}
+          </div>
         </div>
-        <style>{`
-          @keyframes blink {
-            0% { opacity: 1; }
-            50% { opacity: 0; }
-            100% { opacity: 1; }
-          }
-        `}</style>
       </div>
 
-      <div style={{ fontSize: "18px", marginBottom: "10px" }}>
-        <strong>Completion:</strong> {percentage}%
-      </div>
-      <div style={{ fontSize: "18px", marginBottom: "10px" }}>
-        <strong>Accuracy:</strong> {accuracy}%
-      </div>
-      {percentage >= 100 && (
-        <div
-          style={{
-            padding: "10px",
-            backgroundColor: "#4caf50",
-            color: "white",
-            borderRadius: "5px",
-            marginTop: "20px",
-          }}
-        >
-          Completed! Waiting for others to finish...
+      <div className="stats" style={{ marginTop: "1rem" }}>
+        <div className="stat">
+          <span className="value">{percentage}%</span>
+          <span className="label">Completion</span>
         </div>
+        <div className="stat">
+          <span className="value">{accuracy}%</span>
+          <span className="label">Accuracy</span>
+        </div>
+      </div>
+
+      {percentage >= 100 && (
+        <p className="status success" style={{ marginTop: "1rem" }}>
+          Completed! Waiting for others to finish...
+        </p>
       )}
     </div>
   );

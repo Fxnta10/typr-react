@@ -18,29 +18,24 @@ export default function CreateRoom() {
     }
 
     const handleConnect = () => {
-      console.log("Connected to server with ID:", socket.id);
       setSocketConnected(true);
     };
 
     const handleDisconnect = () => {
-      console.log("Disconnected from server");
       setSocketConnected(false);
     };
 
     const handleConnectError = (error) => {
-      console.error("Socket connection error:", error);
       setSocketConnected(false);
       toast.error("Failed to connect to server");
+      console.error("Socket connection error:", error);
     };
 
     socket.on("connect", handleConnect);
     socket.on("disconnect", handleDisconnect);
     socket.on("connect_error", handleConnectError);
 
-    // Check if already connected
-    if (socket.connected) {
-      setSocketConnected(true);
-    }
+    if (socket.connected) setSocketConnected(true);
 
     return () => {
       socket.off("connect", handleConnect);
@@ -50,9 +45,7 @@ export default function CreateRoom() {
   }, []);
 
   useEffect(() => {
-    if (error) {
-      toast.error(error);
-    }
+    if (error) toast.error(error);
   }, [error]);
 
   const handleSubmit = async (e) => {
@@ -61,7 +54,6 @@ export default function CreateRoom() {
     setError(null);
 
     try {
-      // Validation
       if (!username.trim()) {
         toast.error("Username cannot be empty");
         return;
@@ -69,17 +61,9 @@ export default function CreateRoom() {
 
       if (!socketConnected || !socket.id) {
         toast.error("Socket not connected. Please wait and try again.");
-        console.log("Socket status:", {
-          connected: socketConnected,
-          id: socket.id,
-        });
         return;
       }
 
-      console.log("Creating room with socket ID:", socket.id);
-      console.log("Before API call:", socketConnected, socket.id);
-
-      // Call create room API
       const res = await axios.post("/api/createroom", {
         username: username.trim(),
         socketID: socket.id,
@@ -90,7 +74,6 @@ export default function CreateRoom() {
         setError(res.data.error);
       } else {
         toast.success(`Room ${res.data.room.roomCode} created successfully!`);
-        // Navigate to the lobby with the room code
         navigate(`/${res.data.room.roomCode}/lobby`);
       }
     } catch (err) {
@@ -105,17 +88,16 @@ export default function CreateRoom() {
   };
 
   return (
-    <main>
-      <div>
+    <div className="container">
+      <div className="form-container">
         <h1>Create New Room</h1>
         <p>Create a new typing race room and invite your friends</p>
-      </div>
 
-      <div>
-        <form onSubmit={handleSubmit}>
-          <div>
+        <form onSubmit={handleSubmit} className="form">
+          <div className="form-group">
             <label htmlFor="username">Your Username</label>
             <input
+              className="input-field"
               type="text"
               name="username"
               id="username"
@@ -127,41 +109,32 @@ export default function CreateRoom() {
             />
           </div>
 
-          <button type="submit" disabled={loading || !socketConnected}>
+          <button className="submit-button" type="submit" disabled={loading || !socketConnected}>
             {loading ? "Creating Room..." : "Create Room"}
           </button>
         </form>
 
-        {loading && <p>Creating your room...</p>}
+        {loading && <p className="status muted">Creating your room...</p>}
+        {!socketConnected && <p className="status muted">Connecting to server...</p>}
+        {socketConnected && <p className="status success">Connected</p>}
 
-        {!socketConnected && (
-          <p style={{ color: "orange" }}>
-            Connecting to server...
-            {socket.id && <span> (Socket ID: {socket.id})</span>}
-          </p>
-        )}
-
-        {socketConnected && (
-          <p style={{ color: "green" }}>
-            Connected to server ✓ (Socket ID: {socket.id})
-          </p>
-        )}
-
-        <div>
+        <div style={{ marginTop: '1rem' }}>
           <span>
-            Want to join an existing room?{" "}
+            Want to join an existing room? {" "}
             <a
               href="/"
               onClick={(e) => {
                 e.preventDefault();
                 navigate("/");
               }}
+              style={{ color: 'var(--accent)' }}
             >
               Join Room
             </a>
           </span>
         </div>
       </div>
-    </main>
+    </div>
   );
 }
+

@@ -106,57 +106,63 @@ export default function Lobby() {
     }, 100);
   };
 
-  const usersTable = () => {
-    return users.map((user, index) => (
-      <div
-        key={index}
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          padding: "10px",
-          border: "1px solid #ccc",
-          margin: "5px",
-        }}
-      >
-        <span>{user.username}</span>
-        <span
-          style={{
-            cursor: "pointer",
-            color: user.ready ? "green" : "red",
-            fontWeight: "bold",
-          }}
-        >
-          {user.ready ? "Ready" : "Not Ready"}
-        </span>
+  if (loading)
+    return (
+      <div className="container">
+        <p className="status muted">Loading...</p>
       </div>
-    ));
-  };
-
-  if (loading) return <div>Loading...</div>;
-  if (error) return <div>Error: {error}</div>;
+    );
+  if (error)
+    return (
+      <div className="container">
+        <p className="status error">Error: {error}</p>
+      </div>
+    );
 
   return (
-    <div>
-      <h1>Lobby - Room: {roomCode}</h1>
-      <p>Socket ID: {socket.id}</p>
-      <div>
-        <h2>Users ({users.length})</h2>
+    <div className="container">
+      <h1>Lobby — Room: {roomCode}</h1>
+      <h2>Players ({users.length})</h2>
+      <div className="user-list">
         {users.length === 0 ? (
-          <p>No users in the lobby yet...</p>
+          <p className="status muted">No users in the lobby yet...</p>
         ) : (
-          usersTable()
+          users.map((user, index) => (
+            <div key={index} className="user-item">
+              <span
+                style={{
+                  color:
+                    user.username === username ? "var(--accent)" : "inherit",
+                }}
+              >
+                {user.username}
+                {user.username === username && " (YOU)"}
+              </span>
+              <span
+                className={`ready-badge ${user.ready ? "ready" : "not-ready"}`}
+              >
+                {user.ready ? "Ready" : "Not Ready"}
+              </span>
+            </div>
+          ))
         )}
       </div>
-      {allReady() && users.length > 0 && (
-        <div>
-          <p style={{ color: "green", fontWeight: "bold" }}>
-            All users are ready!
-          </p>
-        </div>
+
+      {users.length > 0 && (
+        <button
+          className="btn"
+          onClick={toggleUserReady}
+          style={{ marginTop: "1rem" }}
+        >
+          {ready ? "Set Not Ready" : "Set Ready"}
+        </button>
       )}
-      <div>
-        <span onClick={toggleUserReady}>{ready ? "Ready" : "Not Ready"}</span>
-      </div>
+
+      {allReady() && users.length > 0 && (
+        <p className="status success" style={{ marginTop: "1rem" }}>
+          All users are ready!
+        </p>
+      )}
     </div>
   );
 }
