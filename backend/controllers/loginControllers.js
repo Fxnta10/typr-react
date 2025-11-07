@@ -1,3 +1,4 @@
+const { generateParagraphAPI } = require("../helper");
 const Room = require("../models/Room");
 
 // Generate a random 4-digit room code
@@ -126,14 +127,13 @@ const createRoom = async (req, res) => {
         error: "Unable to generate unique room code. Please try again.",
       });
     }
-
+    const para = await generateParagraphAPI(30);
     // Create new room
     const newRoom = new Room({
       roomCode: roomCode,
       usernames: [username],
       sockets: [socketID],
-      paragraph:
-        "paragraphs are the building blocks of papers many students define paragraphs in terms of length a paragraph is a group of at least five sentences a paragraph is half a page long",
+      paragraph: para,
       results: [],
     });
 
