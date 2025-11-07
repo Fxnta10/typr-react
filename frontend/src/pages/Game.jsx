@@ -15,8 +15,8 @@ export default function Game() {
   const paragraphLength = useRef(0);
   const [index, setIndex] = useState(0);
   const [accuracy, setAccuracy] = useState(100);
+  const [hasEmittedComplete, setHasEmittedComplete] = useState(false);
   const textRef = useRef(null);
-  const [, setMessageSent] = useState([]);
   const navigate = useNavigate();
 
   const calculateAccuracy = useCallback((paragraph) => {
@@ -75,12 +75,6 @@ export default function Game() {
       }
       setUsers(tempUsers);
 
-      const tempMessageSent = res.data.users.map((u) => ({
-        username: u.username,
-        sent: false,
-      }));
-      setMessageSent(tempMessageSent);
-
       const resp = await axios.get("/api/getUser", {
         params: {
           socketID: socket.id,
@@ -103,6 +97,13 @@ export default function Game() {
   useEffect(() => {
     if (roomCode) getRoomDetails();
   }, [roomCode, getRoomDetails]);
+
+  // Join the socket.io room for this game
+  useEffect(() => {
+    if (roomCode) {
+      socket.emit("join-room", roomCode);
+    }
+  }, [roomCode]);
 
   // Handle keyboard input
   useEffect(() => {
@@ -166,7 +167,13 @@ export default function Game() {
   useEffect(() => {
     const newPercentage = calculatePercentage();
     setPercentage(newPercentage);
-  }, [index, calculatePercentage]);
+
+    if (!hasEmittedComplete && newPercentage >= 100) {
+      const msg = `${username} has completed typing...`;
+      socket.emit("user-completed", { msg, roomCode });
+      setHasEmittedComplete(true);
+    }
+  }, [index, calculatePercentage, hasEmittedComplete, username, roomCode]);
 
   // Auto-scroll: keep the caret within the visible area
   useEffect(() => {
@@ -210,36 +217,15 @@ export default function Game() {
     const handler = (newUsers) => {
       console.log("Received game details update:", newUsers);
       setUsers(newUsers);
-
-      newUsers.forEach((user) => {
-        setMessageSent((prev) => {
-          // Find by username to be robust to ordering changes
-          const idx = prev.findIndex((e) => e.username === user.username);
-          const alreadySent = idx !== -1 && prev[idx]?.sent;
-
-          if (
-            user.completion === 100 &&
-            !alreadySent &&
-            username !== user.username
-          ) {
-            toast.success(`${user.username} has completed typing`);
-            const updated = [...prev];
-            if (idx === -1) {
-              updated.push({ username: user.username, sent: true });
-            } else {
-              updated[idx] = { ...updated[idx], sent: true };
-            }
-            return updated;
-          }
-          return prev;
-        });
-      });
     };
-
+    const displayMsg = (msg) => {
+      toast.success(msg);
+    };
     socket.on("recieve-game-details", handler);
-
+    socket.on("completion-message", displayMsg);
     return () => {
       socket.off("recieve-game-details", handler);
+      socket.off("completion-message", displayMsg);
     };
   }, []);
 

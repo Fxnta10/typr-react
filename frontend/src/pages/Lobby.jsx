@@ -48,6 +48,13 @@ export default function Lobby() {
     fetchUsers();
   }, [roomCode]);
 
+  // Join the socket.io room for this lobby
+  useEffect(() => {
+    if (roomCode) {
+      socket.emit("join-room", roomCode);
+    }
+  }, [roomCode]);
+
   useEffect(() => {
     console.log("Setting up socket listeners for room:", roomCode);
 

@@ -58,6 +58,15 @@ app.get("/api/:roomCode/details", roomControllers.roomDetails);
 io.on("connection", (socket) => {
   console.log("A user connected:", socket.id);
 
+  socket.on("join-room", (roomCode) => {
+    try {
+      socket.join(roomCode);
+      console.log(`Socket ${socket.id} joined room ${roomCode}`);
+    } catch (e) {
+      console.error("join-room error:", e);
+    }
+  });
+
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
   });
@@ -67,6 +76,16 @@ io.on("connection", (socket) => {
 
   socket.on("game-details", (newUsers, roomCode) => {
     socket.to(roomCode).emit("recieve-game-details", newUsers);
+  });
+
+  socket.on("user-completed", (payload) => {
+    try {
+      const { msg, roomCode } = payload || {};
+      if (!roomCode) return;
+      socket.to(roomCode).emit("completion-message", msg);
+    } catch (e) {
+      console.error("user-completed error:", e);
+    }
   });
 });
 
