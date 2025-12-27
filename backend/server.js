@@ -7,7 +7,7 @@ const http = require("http");
 const server = http.createServer(app);
 const { Server } = require("socket.io");
 const PORT = process.env.PORT || 3000;
-
+const path = require("path");
 // MongoDB connection
 const MONGODB_URI =
   process.env.MONGODB_URI || "mongodb://localhost:27017/typeracer";
@@ -36,10 +36,11 @@ app.use(cors());
 app.use(express.json());
 
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE"],
-  },
+  path: "/api/ws",
+  // cors: {
+  //   origin: "*",
+  //   methods: ["GET", "POST", "PUT", "DELETE"],
+  // },
 });
 
 // Make io available to routes
@@ -115,6 +116,10 @@ app.get("/api/getUser", async (req, res) => {
   }
 });
 
+// Serve static files from the 'public' directory
+app.use(express.static(path.join(__dirname, "../frontend/dist")));
+
 server.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
+  console.log(path.join(__dirname, "../frontend/dist"));
 });
