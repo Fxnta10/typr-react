@@ -5,8 +5,8 @@ import { Toaster } from "react-hot-toast";
 import LoginPage from "./pages/LoginPage";
 import Lobby from "./pages/Lobby";
 import Game from "./pages/Game";
-import CreateRoom from "./pages/createRoom";
 import Result from "./pages/Result";
+import CreateRoom from "./pages/CreateRoom";
 function App() {
   return (
     <>
