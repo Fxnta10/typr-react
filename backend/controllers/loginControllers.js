@@ -8,9 +8,9 @@ const generateRoomCode = () => {
 
 const joinRoom = async (req, res) => {
   try {
-    const { username, roomCode, socketID } = req.body;
+    const { username, roomCode, socketID, userId } = req.body;
 
-    console.log("JOIN ROOM REQUEST:", { username, roomCode, socketID });
+    console.log("JOIN ROOM REQUEST:", { username, roomCode, socketID, userId });
 
     // Validation - check if required fields are provided
     if (!username || !roomCode || !socketID) {
@@ -29,23 +29,72 @@ const joinRoom = async (req, res) => {
     }
 
     // Check if username already exists in the room
-    const usernameExists = room.usernames.includes(username);
-    if (usernameExists) {
+    const existingUser = room.users.find((u) => u.username === username);
+
+    if (existingUser) {
+      // If userId matches, allow rejoin by updating socketId
+      if (userId && existingUser.userId === userId) {
+        existingUser.socketId = socketID;
+        await room.save();
+
+        const io = req.app.get("io");
+        if (io) {
+          const socket = io.sockets.sockets.get(socketID);
+          if (socket) {
+            socket.join(roomCode);
+            console.log(`Socket ${socketID} RE-JOINED room ${roomCode}`);
+
+            const users = room.users.map((u) => ({
+              username: u.username,
+              ready: u.ready,
+            }));
+            io.to(roomCode).emit("user-list-updated", users);
+          }
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: `User: ${username} successfully rejoined room ${roomCode}`,
+          room: {
+            roomCode: room.roomCode,
+            usernames: room.users.map((u) => u.username),
+            userCount: room.users.length,
+            status: room.status,
+          },
+        });
+      }
+
+      // Username taken by a different user
       return res.status(409).json({
         success: false,
         error: "Username already taken, try another username",
       });
     }
 
-    // Add user to room
-    room.usernames.push(username);
-    room.sockets.push(socketID);
+    // Check room status - only block joining mid-game if it's a new user
+    if (room.status !== "lobby") {
+      return res.status(400).json({
+        success: false,
+        error: "This room's game is already in progress or finished",
+      });
+    }
+
+    // Add new user to room
+    room.users.push({
+      username,
+      userId: userId || "",
+      socketId: socketID,
+      ready: false,
+      completion: 0,
+      accuracy: 100,
+      wpm: 0,
+      finished: false,
+    });
     await room.save();
 
     console.log("Room after adding user:", {
       roomCode,
-      usernames: room.usernames,
-      sockets: room.sockets,
+      users: room.users,
     });
 
     // Get socket.io instance from app
@@ -58,17 +107,12 @@ const joinRoom = async (req, res) => {
         console.log(`Socket ${socketID} joined room ${roomCode}`);
 
         // Emit updated user list to all clients in the room
-        const users = room.usernames.map((u) => ({
-          username: u,
-          ready: false,
+        const users = room.users.map((u) => ({
+          username: u.username,
+          ready: u.ready,
         }));
 
         console.log("Emitting user-list-updated to room:", roomCode, users);
-        console.log(
-          "Sockets in room:",
-          Array.from(io.sockets.adapter.rooms.get(roomCode) || [])
-        );
-
         io.to(roomCode).emit("user-list-updated", users);
       } else {
         console.error(`Socket ${socketID} not found in io.sockets.sockets`);
@@ -82,8 +126,9 @@ const joinRoom = async (req, res) => {
       message: `User: ${username} successfully joined room ${roomCode}`,
       room: {
         roomCode: room.roomCode,
-        usernames: room.usernames,
-        userCount: room.usernames.length,
+        usernames: room.users.map((u) => u.username),
+        userCount: room.users.length,
+        status: room.status,
       },
     });
   } catch (error) {
@@ -97,9 +142,9 @@ const joinRoom = async (req, res) => {
 
 const createRoom = async (req, res) => {
   try {
-    const { username, socketID } = req.body;
+    const { username, socketID, userId } = req.body;
 
-    console.log("CREATE ROOM REQUEST:", { username, socketID });
+    console.log("CREATE ROOM REQUEST:", { username, socketID, userId });
 
     // Validation
     if (!username || !socketID) {
@@ -127,22 +172,33 @@ const createRoom = async (req, res) => {
         error: "Unable to generate unique room code. Please try again.",
       });
     }
+
     const para = await generateParagraphAPI(30);
     // Create new room
     const newRoom = new Room({
       roomCode: roomCode,
-      usernames: [username],
-      sockets: [socketID],
+      users: [
+        {
+          username,
+          userId: userId || "",
+          socketId: socketID,
+          ready: false,
+          completion: 0,
+          accuracy: 100,
+          wpm: 0,
+          finished: false,
+        },
+      ],
       paragraph: para,
       results: [],
+      status: "lobby",
     });
 
     await newRoom.save();
 
     console.log("Room created:", {
       roomCode,
-      usernames: newRoom.usernames,
-      sockets: newRoom.sockets,
+      users: newRoom.users,
     });
 
     // Get socket.io instance from app
@@ -155,9 +211,9 @@ const createRoom = async (req, res) => {
         console.log(`Socket ${socketID} joined room ${roomCode}`);
 
         // Emit initial user list to the room
-        const users = newRoom.usernames.map((u) => ({
-          username: u,
-          ready: false,
+        const users = newRoom.users.map((u) => ({
+          username: u.username,
+          ready: u.ready,
         }));
 
         console.log("Emitting user-list-updated to room:", roomCode, users);
@@ -174,8 +230,9 @@ const createRoom = async (req, res) => {
       message: `Room ${roomCode} created successfully`,
       room: {
         roomCode: newRoom.roomCode,
-        usernames: newRoom.usernames,
-        userCount: newRoom.usernames.length,
+        usernames: newRoom.users.map((u) => u.username),
+        userCount: newRoom.users.length,
+        status: newRoom.status,
       },
     });
   } catch (error) {

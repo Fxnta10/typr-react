@@ -4,322 +4,361 @@ import toast from "react-hot-toast";
 import { useNavigate, useParams } from "react-router-dom";
 import socket from "../socket";
 
+import { useAuth } from "../context/AuthContext";
+
 export default function Game() {
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [paragraph, setParagraph] = useState([]);
   const [users, setUsers] = useState([]);
   const [username, setUsername] = useState("");
   const [error, setError] = useState(null);
   const { roomCode } = useParams();
+
   const [percentage, setPercentage] = useState(0);
   const paragraphLength = useRef(0);
   const [index, setIndex] = useState(0);
   const [accuracy, setAccuracy] = useState(100);
+  const [wpm, setWpm] = useState(0);
+  const [finished, setFinished] = useState(false);
   const [hasEmittedComplete, setHasEmittedComplete] = useState(false);
   const textRef = useRef(null);
+  const caretRef = useRef(null);
   const navigate = useNavigate();
+  const navigatingAway = useRef(false);
+  const { user, refreshProfile } = useAuth();
 
-  const calculateAccuracy = useCallback((paragraph) => {
-    if (!paragraph || paragraph.length === 0) return 100;
+  // Countdown and Timer
+  const [countdown, setCountdown] = useState(5);
+  const [countdownActive, setCountdownActive] = useState(true);
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [isTyping, setIsTyping] = useState(false);
+  const typingTimer = useRef(null);
+  const startTimeRef = useRef(null);
 
-    let totalTyped = 0;
-    let incorrect = 0;
-
-    for (const letterObj of paragraph) {
-      if (letterObj.valid !== -1) {
-        totalTyped++;
-        if (letterObj.valid === 0) incorrect++;
-      }
+  const calculateAccuracy = useCallback((para) => {
+    if (!para || para.length === 0) return 100;
+    let typed = 0, incorrect = 0;
+    for (const ch of para) {
+      if (ch.valid !== -1) { typed++; if (ch.valid === 0) incorrect++; }
     }
+    if (typed === 0) return 100;
+    return parseFloat(((typed - incorrect) / typed * 100).toFixed(2));
+  }, []);
 
-    if (totalTyped === 0) return 100;
-
-    const accuracy = ((totalTyped - incorrect) / totalTyped) * 100;
-    return parseFloat(accuracy.toFixed(2));
+  const calculateWPM = useCallback((para, secs) => {
+    if (secs <= 0) return 0;
+    const correct = para.filter((c) => c.valid === 1).length;
+    return Math.round((correct / 5) / (secs / 60));
   }, []);
 
   const calculatePercentage = useCallback(() => {
     if (paragraphLength.current === 0) return 0;
-    const percentage = (index / paragraphLength.current) * 100;
-    return parseFloat(percentage.toFixed(2));
+    return parseFloat(((index / paragraphLength.current) * 100).toFixed(2));
   }, [index]);
 
+  // Fetch room details
   const getRoomDetails = useCallback(async () => {
     try {
-      setLoading(true);
-      setError(null);
       const res = await axios.get(`/api/${roomCode}/details`);
-
       if (!res.data.success) {
-        const errorMsg = res.data.error || "Failed to fetch room details";
-        toast.error(errorMsg);
-        setError(errorMsg);
+        setError(res.data.error || "Failed to load game");
         return;
       }
 
-      let tempParagraph = [];
-      for (const letter of res.data.paragraph) {
-        tempParagraph.push({ letter, valid: -1 });
-      }
+      const letters = res.data.paragraph.split("").map((ch) => ({ letter: ch, valid: -1 }));
+      setParagraph(letters);
+      paragraphLength.current = letters.length;
 
-      setParagraph(tempParagraph);
-      paragraphLength.current = res.data.paragraph.length;
-
-      const tempUsers = [];
-      for (const user of res.data.users) {
-        tempUsers.push({
-          username: user.username,
-          accuracy: 100,
-          completion: 0,
-        });
-      }
+      const tempUsers = res.data.users.map((u) => ({
+        username: u.username,
+        accuracy: 100,
+        completion: 0,
+        wpm: 0,
+        finished: u.finished || false,
+      }));
       setUsers(tempUsers);
 
-      const resp = await axios.get("/api/getUser", {
-        params: {
-          socketID: socket.id,
-          roomCode: roomCode,
-        },
-      });
-
-      setUsername(resp.data.username);
-    } catch (error) {
-      const errorMsg =
-        error.response?.data?.error || error.message || "Something went wrong";
-      toast.error(errorMsg);
-      setError(errorMsg);
+      // Get own username
+      try {
+        const resp = await axios.get("/api/getUser", {
+          params: { socketID: socket.id, roomCode },
+        });
+        setUsername(resp.data.username);
+      } catch {
+        if (user) setUsername(user.username);
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || "Error loading game");
     } finally {
       setLoading(false);
     }
   }, [roomCode]);
 
-  // Fetch room details on mount
-  useEffect(() => {
-    if (roomCode) getRoomDetails();
-  }, [roomCode, getRoomDetails]);
+  useEffect(() => { if (roomCode) getRoomDetails(); }, [roomCode, getRoomDetails]);
+  useEffect(() => { if (roomCode) socket.emit("join-room", roomCode); }, [roomCode]);
 
-  // Join the socket.io room for this game
+  // Countdown
   useEffect(() => {
-    if (roomCode) {
-      socket.emit("join-room", roomCode);
+    if (!loading && paragraph.length > 0) {
+      const id = setInterval(() => {
+        setCountdown((prev) => {
+          if (prev <= 1) { clearInterval(id); setCountdownActive(false); startTimeRef.current = Date.now(); return 0; }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(id);
     }
-  }, [roomCode]);
+  }, [loading, paragraph.length]);
 
-  // Handle keyboard input
+  // Elapsed time
   useEffect(() => {
-    const handleKeyDown = (e) => {
+    if (countdownActive || finished) return;
+    const id = setInterval(() => {
+      setElapsedTime((Date.now() - startTimeRef.current) / 1000);
+    }, 500);
+    return () => clearInterval(id);
+  }, [countdownActive, finished]);
+
+  // Keyboard handler
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (countdownActive || finished) return;
       const key = e.key;
 
-      // Prevent page scroll/back navigation for typing keys
-      if (
-        key === " " ||
-        key === "Spacebar" ||
-        key === "Backspace" ||
-        /^[a-zA-Z0-9 .,!?;:'"()-]$/.test(key)
-      ) {
+      // Mark typing activity for caret animation
+      setIsTyping(true);
+      clearTimeout(typingTimer.current);
+      typingTimer.current = setTimeout(() => setIsTyping(false), 1000);
+
+      if ([" ", "Spacebar", "Backspace"].includes(key) || /^[a-zA-Z0-9 .,!?;:'"()\-]$/.test(key)) {
         e.preventDefault();
       }
 
-      // Don't process input if game is complete
-      if (percentage >= 100) return;
-
-      // Handle backspace
       if (key === "Backspace") {
         if (index > 0) {
-          setIndex((prev) => prev - 1);
-          setParagraph((prev) => {
-            const newParagraph = [...prev];
-            newParagraph[index - 1].valid = -1; // reset last typed char
-            return newParagraph;
+          setIndex((p) => p - 1);
+          setParagraph((p) => {
+            const n = [...p];
+            n[index - 1].valid = -1;
+            return n;
           });
         }
         return;
       }
 
-      // Allow only alphanumeric + space + punctuation
-      if (/^[a-zA-Z0-9 .,!?;:'"()-]$/.test(key)) {
-        setParagraph((prev) => {
-          const newParagraph = [...prev];
-          if (newParagraph[index]) {
-            newParagraph[index].valid =
-              newParagraph[index].letter === key ? 1 : 0;
-          }
-          return newParagraph;
+      if (/^[a-zA-Z0-9 .,!?;:'"()\-]$/.test(key)) {
+        setParagraph((p) => {
+          const n = [...p];
+          if (n[index]) n[index].valid = n[index].letter === key ? 1 : 0;
+          return n;
         });
-
-        setIndex((prev) => prev + 1);
+        setIndex((p) => p + 1);
       }
     };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [index, finished, countdownActive]);
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [index, percentage]);
+  // Accuracy
+  useEffect(() => { setAccuracy(calculateAccuracy(paragraph)); }, [paragraph, calculateAccuracy]);
 
-  // Update accuracy when paragraph changes
+  // WPM
   useEffect(() => {
-    const newAccuracy = calculateAccuracy(paragraph);
-    setAccuracy(newAccuracy);
-  }, [paragraph, calculateAccuracy]);
+    if (countdownActive) return;
+    setWpm(calculateWPM(paragraph, elapsedTime));
+  }, [paragraph, elapsedTime, countdownActive, calculateWPM]);
 
-  // Update percentage when index changes
+  // Percentage + completion check
   useEffect(() => {
-    const newPercentage = calculatePercentage();
-    setPercentage(newPercentage);
+    const pct = calculatePercentage();
+    setPercentage(pct);
 
-    if (!hasEmittedComplete && newPercentage >= 100) {
-      const msg = `${username} has completed typing...`;
-      socket.emit("user-completed", { msg, roomCode });
+    if (!hasEmittedComplete && pct >= 100) {
+      const finalWPM = calculateWPM(paragraph, elapsedTime);
+      const finalAcc = calculateAccuracy(paragraph);
+
+      socket.emit("user-completed", { msg: `${username} finished typing!`, roomCode });
+      socket.emit("submit-results", { username, roomCode, wpm: finalWPM, accuracy: finalAcc });
+
+      // Update DB and context
+      axios.post("/api/auth/update-stats", { wpm: finalWPM, accuracy: finalAcc })
+        .then(() => refreshProfile())
+        .catch(console.error);
+
+      setFinished(true);
       setHasEmittedComplete(true);
     }
-  }, [index, calculatePercentage, hasEmittedComplete, username, roomCode]);
+  }, [index, calculatePercentage, hasEmittedComplete, username, roomCode, elapsedTime, accuracy, paragraph, calculateWPM, calculateAccuracy]);
 
-  // Auto-scroll: keep the caret within the visible area
+  // Smooth caret positioning
   useEffect(() => {
-    if (!textRef.current) return;
-    const caret = textRef.current.querySelector(".caret");
-    if (caret) {
-      caret.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-        inline: "nearest",
-      });
+    if (!textRef.current || !caretRef.current) return;
+    const spans = textRef.current.querySelectorAll(".char");
+    const activeSpan = index < spans.length ? spans[index] : spans[spans.length - 1];
+
+    if (activeSpan) {
+      const containerRect = textRef.current.getBoundingClientRect();
+      const spanRect = activeSpan.getBoundingClientRect();
+      const isEnd = index >= paragraph.length;
+
+      caretRef.current.style.left = `${(isEnd ? spanRect.right : spanRect.left) - containerRect.left}px`;
+      caretRef.current.style.top = `${spanRect.top - containerRect.top + 2}px`;
+      caretRef.current.style.height = `${spanRect.height - 4}px`;
+
+      // Scroll into view
+      activeSpan.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
-  }, [index, paragraph.length]);
+  }, [index, paragraph]);
 
-  // Emit game details when stats change
+  // Emit game details to other players
   useEffect(() => {
-    if (!username || users.length === 0) return;
-
-    const updatedUsers = users.map((user) =>
-      user.username === username
-        ? { ...user, accuracy, completion: percentage }
-        : user
+    if (!username || users.length === 0 || countdownActive) return;
+    const currentWPM = calculateWPM(paragraph, elapsedTime);
+    const updatedUsers = users.map((u) =>
+      u.username === username
+        ? { ...u, accuracy, completion: percentage, wpm: currentWPM }
+        : u
     );
-
-    // Only emit if something actually changed
-    const hasChanged = updatedUsers.some((user, idx) => {
-      const oldUser = users[idx];
-      return (
-        user.accuracy !== oldUser.accuracy ||
-        user.completion !== oldUser.completion
-      );
-    });
-
+    const hasChanged = updatedUsers.some((u, i) =>
+      u.accuracy !== users[i]?.accuracy ||
+      u.completion !== users[i]?.completion ||
+      u.wpm !== users[i]?.wpm
+    );
     if (hasChanged) {
       socket.emit("game-details", updatedUsers, roomCode);
       setUsers(updatedUsers);
     }
-  }, [accuracy, percentage, username, roomCode, users]);
+  }, [accuracy, percentage, elapsedTime, username, roomCode, users, countdownActive, calculateWPM, paragraph]);
 
+  // Socket listeners
   useEffect(() => {
-    const handler = (newUsers) => {
-      console.log("Received game details update:", newUsers);
-      setUsers(newUsers);
+    const onGameDetails = (newUsers) => setUsers(newUsers);
+    const onCompletion = (msg) => toast.success(msg, { icon: "🏁" });
+    const onGameOver = (results) => {
+      navigatingAway.current = true;
+      toast.success("Race over! 🏆");
+      setTimeout(() => navigate(`/${roomCode}/results`, { state: { results } }), 1500);
     };
-    const displayMsg = (msg) => {
-      toast.success(msg);
+    const onPlayerLeft = (who) => {
+      toast(`${who} left`, { icon: "👋" });
+      setUsers((p) => p.filter((u) => u.username !== who));
     };
-    socket.on("recieve-game-details", handler);
-    socket.on("completion-message", displayMsg);
+
+    socket.on("recieve-game-details", onGameDetails);
+    socket.on("completion-message", onCompletion);
+    socket.on("game-over", onGameOver);
+    socket.on("player-left", onPlayerLeft);
     return () => {
-      socket.off("recieve-game-details", handler);
-      socket.off("completion-message", displayMsg);
+      socket.off("recieve-game-details", onGameDetails);
+      socket.off("completion-message", onCompletion);
+      socket.off("game-over", onGameOver);
+      socket.off("player-left", onPlayerLeft);
     };
-  }, []);
+  }, [roomCode, navigate]);
 
-  // Navigate to results when all users are done
+  // Cleanup on unmount
   useEffect(() => {
-    if (users.length > 0 && users.every((user) => user.completion >= 100)) {
-      console.log("All users completed! Navigating to results...");
-      setTimeout(() => {
-        navigate(`/${roomCode}/results`, { state: { users } });
-      }, 1000);
-    }
-  }, [users, navigate, roomCode]);
+    return () => {
+      if (!navigatingAway.current) {
+        socket.emit("leave-room", roomCode);
+      }
+    };
+  }, [roomCode]);
 
-  const getClassForValidity = (v) => {
-    if (v === -1) return "char-untyped";
-    if (v === 0) return "char-incorrect";
-    return "char-correct";
-  };
+  const chars = { "-1": "char-untyped", "0": "char-incorrect", "1": "char-correct" };
 
-  if (loading)
-    return (
-      <div className="container">
-        <p className="status muted">Loading game details...</p>
-      </div>
-    );
-  if (error)
-    return (
-      <div className="container">
-        <p className="status error">Error: {error}</p>
-      </div>
-    );
+  if (loading) return <div className="loading-state"><span className="spinner" /><span>Loading game…</span></div>;
+  if (error) return <div className="loading-state" style={{ color: "var(--red)" }}>Error: {error}</div>;
 
   return (
-    <div className="container game-layout">
-      <h1>Room: {roomCode}</h1>
-
-      <div className="players-section">
-        <h2>Players ({users.length})</h2>
-        <div className="user-strip">
-          {users.map((user, idx) => (
-            <div key={idx} className="user-pill">
-              <span
-                className={`name ${user.username === username ? "me" : ""}`}
-              >
-                {user.username}
-                {user.username === username && " (YOU)"}
-              </span>
-              <span className="stat-badge">
-                P: {user.completion >= 100 ? "100%" : `${user.completion}%`}
-              </span>
-              <span className="stat-badge">A: {user.accuracy}%</span>
-            </div>
-          ))}
+    <div className="game-layout">
+      {/* Countdown overlay */}
+      {countdownActive && (
+        <div className="countdown-overlay">
+          <span className="countdown-label">Get ready to type…</span>
+          <div className="countdown-num" key={countdown}>{countdown}</div>
         </div>
-      </div>
+      )}
 
-      <div className="text-section">
-        <h2>Type this paragraph</h2>
-        <div className="game-area">
-          <div className="game-text" ref={textRef}>
+      {/* Nav bar */}
+      <nav className="game-nav">
+        <div className="site-title">typr<span style={{ color: "var(--accent-2)" }}>.</span></div>
+        <div className="flex items-center gap-3">
+          <div className="room-code-chip" style={{ cursor: "default" }}>🔑 {roomCode}</div>
+          <div className="timer-chip">⏱ {Math.floor(elapsedTime)}s</div>
+        </div>
+      </nav>
+
+      <div className="game-body">
+        {/* Race Tracks */}
+        <div className="race-section">
+          <h2>🏁 Racers</h2>
+          <div className="tracks">
+            {users.map((user, i) => (
+              <div key={i} className="track">
+                <div className="track-meta">
+                  <span className={`track-name ${user.username === username ? "me" : ""}`}>
+                    {user.username}{user.username === username && " (you)"}
+                    {user.finished && " 🏁"}
+                  </span>
+                  <span className="track-stats-inline">
+                    {Math.round(user.wpm || 0)} wpm · {Math.round(user.accuracy || 100)}% acc
+                  </span>
+                </div>
+                <div className="track-bar">
+                  <div className="track-fill" style={{ width: `${Math.min(user.completion || 0, 100)}%` }} />
+                  <div
+                    className="track-car"
+                    style={{ left: `${Math.min(user.completion || 0, 100)}%` }}
+                  >
+                    {user.username === username ? "🏎️" : "🚗"}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Typing area */}
+        <div className={`typing-card ${isTyping ? "typing-active" : ""}`}>
+          <div
+            ref={textRef}
+            className="typing-text"
+            style={{ position: "relative" }}
+          >
+            {/* Smooth caret */}
+            <div ref={caretRef} className="smooth-caret" style={{ position: "absolute" }} />
             {paragraph.map((el, i) => (
-              <span key={i} className={`char ${getClassForValidity(el.valid)}`}>
-                {i === index && <span className="caret" />}
+              <span key={i} className={`char ${chars[String(el.valid)] || "char-untyped"}`}>
                 {el.letter}
               </span>
             ))}
-            {index >= paragraph.length && (
-              <span
-                className="char char-untyped"
-                style={{ display: "inline-block", width: 0 }}
-              >
-                <span className="caret" />
-              </span>
-            )}
           </div>
         </div>
-      </div>
 
-      <div className="stats" style={{ marginTop: "1rem" }}>
-        <div className="stat">
-          <span className="value">{percentage}%</span>
-          <span className="label">Completion</span>
+        {/* Stats */}
+        <div className="game-stats">
+          <div className="game-stat">
+            <span className="game-stat-value">{wpm}</span>
+            <span className="game-stat-label">WPM</span>
+          </div>
+          <div className="game-stat">
+            <span className="game-stat-value">{accuracy}%</span>
+            <span className="game-stat-label">Accuracy</span>
+          </div>
+          <div className="game-stat">
+            <span className="game-stat-value">{Math.round(percentage)}%</span>
+            <span className="game-stat-label">Progress</span>
+          </div>
         </div>
-        <div className="stat">
-          <span className="value">{accuracy}%</span>
-          <span className="label">Accuracy</span>
-        </div>
-      </div>
 
-      {percentage >= 100 && (
-        <p className="status success" style={{ marginTop: "1rem" }}>
-          Completed! Waiting for others to finish...
-        </p>
-      )}
+        {/* Finished banner */}
+        {finished && (
+          <div className="finished-banner">
+            ✓ You finished! Waiting for other racers…
+          </div>
+        )}
+      </div>
     </div>
   );
 }
